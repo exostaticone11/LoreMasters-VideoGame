@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(npm create:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(curl:*)",
+      "Bash(node:*)",
+      "Bash(tesseract:*)",
+      "Bash(npm:*)",
+      "Bash(rm:*)",
+      "Bash(ffprobe:*)"
+    ]
+  }
+}

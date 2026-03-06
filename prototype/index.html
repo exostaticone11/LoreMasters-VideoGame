@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoreMasters - Steam Game Quiz</title>
+</head>
+<body>
+  <div id="app">
+    <!-- INTRO SCREEN -->
+    <div id="screen-intro" class="screen active">
+      <div class="intro-container">
+        <h1 class="logo-text">LORE<span>MASTERS</span></h1>
+        <p class="tagline">Can you name the game from the trailer?</p>
+        <p class="subtitle">10 questions &middot; 10 seconds each &middot; video + audio</p>
+        <button id="btn-start" class="btn-primary">START</button>
+      </div>
+    </div>
+
+    <!-- GAME SCREEN -->
+    <div id="screen-game" class="screen">
+      <div class="game-header">
+        <div class="progress-info">
+          <span id="question-counter">1 / 10</span>
+          <span id="streak-badge" class="streak-badge hidden">STREAK x0</span>
+        </div>
+        <div class="timer-bar-container">
+          <div id="timer-bar" class="timer-bar"></div>
+        </div>
+        <div class="score-display">
+          <span id="score-value">0</span> pts
+        </div>
+      </div>
+
+      <div class="video-container">
+        <video id="game-video" playsinline></video>
+        <div id="video-overlay" class="video-overlay hidden">
+          <div id="overlay-content"></div>
+        </div>
+      </div>
+
+      <div id="answers-container" class="answers-container"></div>
+    </div>
+
+    <!-- RESULTS SCREEN -->
+    <div id="screen-results" class="screen">
+      <div class="results-container">
+        <h1 class="logo-text small">LORE<span>MASTERS</span></h1>
+        <div id="results-score" class="results-score"></div>
+        <div id="results-breakdown" class="results-breakdown"></div>
+        <div class="results-actions">
+          <button id="btn-share" class="btn-primary">SHARE RESULTS</button>
+          <button id="btn-retry" class="btn-secondary">PLAY AGAIN</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
