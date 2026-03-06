@@ -9,7 +9,9 @@
       "Bash(tesseract:*)",
       "Bash(npm:*)",
       "Bash(rm:*)",
-      "Bash(ffprobe:*)"
+      "Bash(ffprobe:*)",
+      "Bash(cygpath -w /tmp/frame-check/1245620_01.png)",
+      "Read(//tmp/frame-check/**)"
     ]
   }
 }

@@ -2,3 +2,6 @@ node_modules/
 .wrangler/
 dist/
 .vite/
+pipeline/output/
+pipeline/eng.traineddata
+pipeline/.tmp/
