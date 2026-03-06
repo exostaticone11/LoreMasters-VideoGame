@@ -12,6 +12,14 @@ let timeLeft = 10;
 let answered = false;
 
 const $ = (s) => document.querySelector(s);
+
+// -- Telemetry --
+const telemetry = [];
+function tlog(event, data = {}) {
+  const entry = { t: performance.now().toFixed(0), event, ...data };
+  telemetry.push(entry);
+  console.log(`[LM ${entry.t}ms] ${event}`, data);
+}
 const screens = {
   intro: $('#screen-intro'),
   game: $('#screen-game'),
@@ -23,15 +31,28 @@ const preloadedBlobs = new Map();
 const preloadPromises = new Map();
 
 function preloadClip(index) {
-  if (index >= GAMES.length || preloadPromises.has(index)) return;
+  if (index >= GAMES.length || preloadPromises.has(index)) return preloadPromises.get(index);
+  const t0 = performance.now();
+  tlog('preload:start', { index, clip: GAMES[index].clip });
   const promise = fetch(GAMES[index].clip)
-    .then(res => res.blob())
+    .then(res => {
+      if (!res.ok) {
+        tlog('preload:http-error', { index, status: res.status });
+        throw new Error(`HTTP ${res.status}`);
+      }
+      tlog('preload:headers', { index, size: res.headers.get('content-length'), type: res.headers.get('content-type') });
+      return res.blob();
+    })
     .then(blob => {
       const url = URL.createObjectURL(blob);
       preloadedBlobs.set(index, url);
+      tlog('preload:done', { index, blobSize: blob.size, ms: (performance.now() - t0).toFixed(0) });
       return url;
     })
-    .catch(() => GAMES[index].clip); // fallback to direct URL
+    .catch(err => {
+      tlog('preload:error', { index, error: err.message });
+      return GAMES[index].clip; // fallback to direct URL
+    });
   preloadPromises.set(index, promise);
   return promise;
 }
@@ -88,6 +109,8 @@ async function startGame() {
   preloadPromises.clear();
   updateScore();
   updateStreak();
+  telemetry.length = 0;
+  tlog('game:start');
   showScreen('game');
 
   // Wait for first clip to be ready before starting
@@ -98,32 +121,68 @@ async function startGame() {
 async function loadQuestion() {
   answered = false;
   const game = GAMES[currentQuestion];
+  const q = currentQuestion;
+
+  tlog('question:load', { q, game: game.name, clip: game.clip });
 
   $('#question-counter').textContent = `${currentQuestion + 1} / ${GAMES.length}`;
   $('#video-overlay').classList.add('hidden');
 
-  // Use preloaded blob URL if available, otherwise fall back to direct URL
-  const clipUrl = preloadedBlobs.get(currentQuestion) || game.clip;
+  // Wait for preload promise if it exists, then use blob URL
+  if (preloadPromises.has(q)) {
+    tlog('question:await-preload', { q });
+    await preloadPromises.get(q);
+  }
+  const clipUrl = preloadedBlobs.get(q) || game.clip;
+  const fromBlob = preloadedBlobs.has(q);
+  tlog('question:src', { q, fromBlob, url: clipUrl.slice(0, 60) });
 
   // Set up video — start muted to guarantee autoplay, then unmute
   const video = $('#game-video');
   video.muted = true;
+
+  // Listen for video errors
+  const errorHandler = () => {
+    const e = video.error;
+    tlog('video:error', { q, code: e?.code, message: e?.message, readyState: video.readyState, networkState: video.networkState });
+  };
+  video.addEventListener('error', errorHandler, { once: true });
+
   video.src = clipUrl;
   video.currentTime = 0;
   video.loop = true;
 
+  tlog('question:waiting-canplay', { q, readyState: video.readyState, networkState: video.networkState });
+
   // Wait for video to be playable before starting timer
-  await new Promise((resolve) => {
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      tlog('question:canplay-timeout', { q, readyState: video.readyState, networkState: video.networkState, paused: video.paused, src: video.src.slice(0, 60) });
+      resolve(); // proceed anyway so game doesn't hang forever
+    }, 15000);
+
     if (video.readyState >= 3) {
+      clearTimeout(timeout);
+      tlog('question:canplay-immediate', { q });
       resolve();
     } else {
-      video.addEventListener('canplay', resolve, { once: true });
+      video.addEventListener('canplay', () => {
+        clearTimeout(timeout);
+        tlog('question:canplay', { q, readyState: video.readyState });
+        resolve();
+      }, { once: true });
     }
   });
 
-  video.play().then(() => {
-    video.muted = false;
-  }).catch(() => {});
+  const playResult = video.play();
+  if (playResult) {
+    playResult.then(() => {
+      video.muted = false;
+      tlog('video:playing', { q, currentTime: video.currentTime, duration: video.duration, readyState: video.readyState });
+    }).catch(err => {
+      tlog('video:play-rejected', { q, error: err.message, readyState: video.readyState, networkState: video.networkState });
+    });
+  }
 
   // Render answers
   const container = $('#answers-container');
@@ -284,6 +343,9 @@ function showResults() {
     </a>`;
   }).join('');
 
+  tlog('game:end', { score, correctCount, bestStreak });
+  console.table(telemetry);
+
   showScreen('results');
 }
 
@@ -294,6 +356,7 @@ function generateShareText() {
 }
 
 // -- Preload first clip immediately on page load --
+tlog('init:preload-clip0');
 preloadClip(0);
 
 // -- Event listeners --
