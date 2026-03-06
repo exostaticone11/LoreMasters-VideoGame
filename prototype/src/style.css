@@ -96,7 +96,7 @@ body {
 .btn-primary {
   background: var(--accent);
   color: white;
-  border: none;
+  border: 1px solid var(--accent);
   padding: 16px 48px;
   border-radius: var(--radius);
   font-size: 1.1rem;
