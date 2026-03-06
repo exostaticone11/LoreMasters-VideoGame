@@ -1,8 +1,8 @@
-// Fetches and ranks games from Steam + SteamSpy APIs.
-// Combines multiple sources to find popular recent games with trailers.
+// Fetches and ranks games from Steam APIs only (no SteamSpy dependency).
+// Sources: Featured categories, Most Played, Search API.
 
 const STEAM_API_BASE = 'https://store.steampowered.com/api';
-const STEAMSPY_API = 'https://steamspy.com/api.php';
+const STEAM_CHARTS_API = 'https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/';
 const ADULT_TAGS = ['Nudity', 'Sexual Content', 'Adult Only', 'NSFW', 'Hentai'];
 const MIN_REVIEWS = 500;
 
@@ -11,7 +11,7 @@ async function fetchFeaturedGames() {
   const res = await fetch(`${STEAM_API_BASE}/featuredcategories?cc=us&l=en`);
   const data = await res.json();
   const appIds = new Set();
-  for (const category of ['top_sellers', 'new_releases', 'coming_soon']) {
+  for (const category of ['top_sellers', 'new_releases', 'coming_soon', 'specials']) {
     const items = data[category]?.items || [];
     for (const item of items) {
       if (item.id) appIds.add(String(item.id));
@@ -21,46 +21,48 @@ async function fetchFeaturedGames() {
   return [...appIds];
 }
 
-// Source 2: SteamSpy top 100 games by player count in last 2 weeks
-async function fetchSteamSpyTop() {
-  const res = await fetch(`${STEAMSPY_API}?request=top100in2weeks`);
-  const data = await res.json();
-  const games = Object.entries(data).map(([id, g]) => ({
-    appId: id,
-    name: g.name,
-    positive: g.positive || 0,
-  }));
-  console.log(`[select] SteamSpy top100: ${games.length} games`);
-  return games;
+// Source 2: Steam Charts — most played games right now
+async function fetchMostPlayed() {
+  try {
+    const res = await fetch(STEAM_CHARTS_API);
+    const data = await res.json();
+    const ranks = data?.response?.ranks || [];
+    const appIds = ranks.map(r => String(r.appid));
+    console.log(`[select] Steam Charts most played: ${appIds.length} games`);
+    return appIds;
+  } catch (err) {
+    console.warn(`[select] Steam Charts failed: ${err.message}`);
+    return [];
+  }
 }
 
-// Source 3: SteamSpy top 100 games in the last 2 weeks by current players
-async function fetchSteamSpyTrending() {
-  const res = await fetch(`${STEAMSPY_API}?request=top100owned`);
-  const data = await res.json();
-  const games = Object.entries(data).map(([id, g]) => ({
-    appId: id,
-    name: g.name,
-    positive: g.positive || 0,
-  }));
-  console.log(`[select] SteamSpy top owned: ${games.length} games`);
-  return games;
+// Source 3: Steam search — recently released popular games
+async function fetchRecentPopular() {
+  try {
+    // Search for recently released games sorted by reviews
+    const res = await fetch(
+      'https://store.steampowered.com/search/results/?sort_by=Reviews_DESC&category1=998&os=win&ignore_preferences=1&ndl=1&count=100&force_infinite=1&json=1'
+    );
+    const data = await res.json();
+    const items = data?.items || [];
+    const appIds = items.map(i => String(i.id || i.appid)).filter(Boolean);
+    console.log(`[select] Steam search recent popular: ${appIds.length} games`);
+    return appIds;
+  } catch (err) {
+    console.warn(`[select] Steam search failed: ${err.message}`);
+    return [];
+  }
 }
 
 // Merge all sources into unique app IDs
 async function fetchAllSources() {
-  const [featured, spyTop, spyTrending] = await Promise.all([
+  const [featured, mostPlayed, recentPopular] = await Promise.all([
     fetchFeaturedGames(),
-    fetchSteamSpyTop(),
-    fetchSteamSpyTrending(),
+    fetchMostPlayed(),
+    fetchRecentPopular(),
   ]);
 
-  const allIds = new Set([
-    ...featured,
-    ...spyTop.map(g => g.appId),
-    ...spyTrending.map(g => g.appId),
-  ]);
-
+  const allIds = new Set([...featured, ...mostPlayed, ...recentPopular]);
   console.log(`[select] Total unique app IDs across all sources: ${allIds.size}`);
   return [...allIds];
 }
@@ -85,7 +87,8 @@ async function fetchAppDetails(appId) {
     const releaseDate = info.release_date?.date ? new Date(info.release_date.date) : null;
     const isComingSoon = info.release_date?.coming_soon || false;
 
-    const trailer = info.movies[0];
+    // Smart trailer selection: prefer gameplay, skip accolades/DLC/update
+    const trailer = pickBestTrailer(info.movies);
     const hlsUrl = trailer.hls_h264 || trailer.dash_h264;
     if (!hlsUrl) return null;
 
@@ -99,6 +102,7 @@ async function fetchAppDetails(appId) {
       tags: [...genres, ...categories],
       trailerUrl: hlsUrl,
       trailerName: trailer.name,
+      trailerIndex: info.movies.indexOf(trailer),
       reviewCount: info.recommendations?.total || 0,
       shortDescription: info.short_description,
     };
@@ -108,29 +112,70 @@ async function fetchAppDetails(appId) {
   }
 }
 
-// Rate-limited batch fetch
-async function fetchAllDetails(appIds, delayMs = 250) {
-  const results = [];
-  for (let i = 0; i < appIds.length; i++) {
-    const app = await fetchAppDetails(appIds[i]);
-    if (app) results.push(app);
+// Pick the best trailer — prefer gameplay, skip accolades/DLC/update
+function pickBestTrailer(movies) {
+  const PREFER = ['gameplay', 'launch', 'official trailer', 'announcement', 'reveal'];
+  const AVOID = ['accolades', 'review', 'update', 'dlc', 'expansion', 'season', 'patch', 'colosseum', 'event', 'crossover'];
 
-    if ((i + 1) % 20 === 0) {
-      console.log(`[select] Fetched ${i + 1}/${appIds.length} (${results.length} valid)`);
+  // Score each trailer
+  const scored = movies.map((m, i) => {
+    const name = (m.name || '').toLowerCase();
+    let score = 0;
+
+    // Boost preferred keywords
+    for (const kw of PREFER) {
+      if (name.includes(kw)) score += 10;
     }
 
-    if (i < appIds.length - 1) {
-      await new Promise(r => setTimeout(r, delayMs));
+    // Penalize avoided keywords
+    for (const kw of AVOID) {
+      if (name.includes(kw)) score -= 20;
+    }
+
+    // Slight preference for earlier trailers (main ones tend to be listed first among good ones)
+    score -= i * 0.5;
+
+    return { movie: m, score, index: i };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].movie;
+}
+
+// Rate-limited batch fetch with concurrency control
+async function fetchAllDetails(appIds, concurrency = 5) {
+  const results = [];
+  let completed = 0;
+
+  // Process in batches for controlled concurrency
+  for (let i = 0; i < appIds.length; i += concurrency) {
+    const batch = appIds.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map(id => fetchAppDetails(id)));
+
+    for (const app of batchResults) {
+      if (app) results.push(app);
+    }
+
+    completed += batch.length;
+    if (completed % 20 === 0 || completed === appIds.length) {
+      console.log(`[select] Fetched ${completed}/${appIds.length} (${results.length} valid)`);
+    }
+
+    // Small delay between batches to respect rate limits
+    if (i + concurrency < appIds.length) {
+      await new Promise(r => setTimeout(r, 300));
     }
   }
   return results;
 }
 
 // Filter and rank games
-function rankGames(games, maxAgeDays = 30) {
+function rankGames(games) {
   const now = new Date();
   const cutoff30 = new Date(now - 30 * 24 * 60 * 60 * 1000);
   const cutoff60 = new Date(now - 60 * 24 * 60 * 60 * 1000);
+  const cutoff90 = new Date(now - 90 * 24 * 60 * 60 * 1000);
+  const cutoff180 = new Date(now - 180 * 24 * 60 * 60 * 1000);
 
   // Heavy hitter filter: must have MIN_REVIEWS or be coming soon
   let filtered = games.filter(g => {
@@ -141,17 +186,13 @@ function rankGames(games, maxAgeDays = 30) {
   console.log(`[select] ${filtered.length} games with ${MIN_REVIEWS}+ reviews (or coming soon)`);
 
   // Score each game: recency is king, popularity is tiebreaker
-  const cutoff90 = new Date(now - 90 * 24 * 60 * 60 * 1000);
-  const cutoff180 = new Date(now - 180 * 24 * 60 * 60 * 1000);
-
   filtered = filtered.map(g => {
     let recencyBonus = 0;
     if (g.isComingSoon) recencyBonus = 4;
-    else if (g.releaseDate && g.releaseDate >= cutoff30) recencyBonus = 5;  // Last 30 days = top priority
+    else if (g.releaseDate && g.releaseDate >= cutoff30) recencyBonus = 5;
     else if (g.releaseDate && g.releaseDate >= cutoff60) recencyBonus = 3;
     else if (g.releaseDate && g.releaseDate >= cutoff90) recencyBonus = 2;
     else if (g.releaseDate && g.releaseDate >= cutoff180) recencyBonus = 1;
-    // Older than 6 months = 0 (still in pool but lowest priority)
     return { ...g, recencyBonus };
   });
 
@@ -189,4 +230,4 @@ function pickGamesForDay(rankedPool, dayOfWeek, count = 10, usedAppIds = new Set
   return shuffled.slice(0, count);
 }
 
-export { fetchAllSources, fetchAllDetails, rankGames, pickGamesForDay };
+export { fetchAllSources, fetchAllDetails, rankGames, pickGamesForDay, pickBestTrailer };
