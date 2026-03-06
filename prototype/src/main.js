@@ -104,17 +104,20 @@ async function startGame() {
   streak = 0;
   bestStreak = 0;
   results = [];
-  preloadedBlobs.forEach(url => URL.revokeObjectURL(url));
-  preloadedBlobs.clear();
-  preloadPromises.clear();
   updateScore();
   updateStreak();
   telemetry.length = 0;
-  tlog('game:start');
+  tlog('game:start', { allPreloaded, blobCount: preloadedBlobs.size });
   showScreen('game');
 
-  // Wait for first clip to be ready before starting
-  await preloadClip(0);
+  // If replaying, re-preload everything
+  if (!allPreloaded || preloadedBlobs.size === 0) {
+    preloadedBlobs.forEach(url => URL.revokeObjectURL(url));
+    preloadedBlobs.clear();
+    preloadPromises.clear();
+    await preloadClip(0);
+    GAMES.slice(1).forEach((_, i) => preloadClip(i + 1));
+  }
   loadQuestion();
 }
 
@@ -355,9 +358,38 @@ function generateShareText() {
   return `LoreMasters - Steam Quiz\n${squares}\n${correctCount}/${GAMES.length} | Score: ${score} | Streak: ${bestStreak}\nPlay at loremasters.com`;
 }
 
-// -- Preload first clip immediately on page load --
-tlog('init:preload-clip0');
-preloadClip(0);
+// -- Preload ALL clips on page load --
+let allPreloaded = false;
+const startBtn = $('#btn-start');
+startBtn.disabled = true;
+startBtn.textContent = 'LOADING...';
+
+async function preloadAll() {
+  const status = $('#preload-status');
+  tlog('init:preload-all-start');
+
+  // Preload clip 0 first (priority) — unlocks START
+  await preloadClip(0);
+  startBtn.disabled = false;
+  startBtn.textContent = 'START';
+  status.textContent = `1 / ${GAMES.length} clips ready`;
+  tlog('init:clip0-ready');
+
+  // Fire off the rest in parallel, update status as each completes
+  let loaded = 1;
+  const remaining = GAMES.slice(1).map((_, i) =>
+    preloadClip(i + 1).then(() => {
+      loaded++;
+      status.textContent = `${loaded} / ${GAMES.length} clips ready`;
+    })
+  );
+  await Promise.all(remaining);
+  allPreloaded = true;
+  status.textContent = 'All clips loaded';
+  setTimeout(() => { status.style.opacity = '0'; }, 1500);
+  tlog('init:preload-all-done', { count: GAMES.length });
+}
+preloadAll();
 
 // -- Event listeners --
 $('#btn-start').addEventListener('click', () => {

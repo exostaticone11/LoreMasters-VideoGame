@@ -84,6 +84,14 @@ body {
   font-size: 0.9rem;
 }
 
+.preload-status {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  margin-top: 8px;
+  transition: opacity 0.5s;
+}
+
 /* -- Buttons -- */
 .btn-primary {
   background: var(--accent);
