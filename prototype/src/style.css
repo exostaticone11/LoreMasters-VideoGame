@@ -480,6 +480,11 @@ a.result-row {
   flex: 1;
   padding: 16px 24px;
   text-align: center;
+  font-size: 1rem;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* -- Responsive -- */
